@@ -1,0 +1,33 @@
+# Kanagawa Alacritty Colors
+colors:
+  primary:
+    background: '#f2ecbc'
+    foreground: '#545464'
+
+  normal:
+    black:   '#545464'
+    red:     '#c84053'
+    green:   '#6f894e'
+    yellow:  '#de9800'
+    blue:    '#9fb5c9'
+    magenta: '#766b90'
+    cyan:    '#5a7785'
+    white:   '#d5cea3'
+
+  bright:
+    black:   '#43436c'
+    red:     '#e82424'
+    green:   '#b7d0ae'
+    yellow:  '#f9d791'
+    blue:    '#c7d7e0'
+    magenta: '#a09cac'
+    cyan:    '#4e8ca2'
+    white:   '#f2ecbc'
+
+  selection:
+    background: '#2d4f67'
+    foreground: '#c8c093'
+
+  indexed_colors:
+    - { index: 16, color: '#ffa066' }
+    - { index: 17, color: '#ff5d62' }
