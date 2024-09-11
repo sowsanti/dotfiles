@@ -1,0 +1,267 @@
+# Plugins
+# ───────────────
+
+# download plugin manager if it doesn't exist
+evaluate-commands %sh{
+  if [[ ! -d $kak_config/plugins/plug.kak ]]; then
+    git clone \
+      https://github.com/andreyorst/plug.kak.git \
+      "$kak_config/plugins/plug.kak"
+  fi
+}
+
+source "%val{config}/plugins/plug.kak/rc/plug.kak"
+
+plug "gustavo-hms/luar"
+plug "andreyorst/fzf.kak" config %{
+    map global user -docstring "fzf mode" s ': fzf-mode<ret>'
+}
+hook global ModuleLoaded fzf %{
+    set global fzf_preview_tmux_height 20
+}
+plug "robertmeta/plug.kak" noload
+plug "ul/kak-lsp" do %{
+    cargo install --locked --force --path .
+}
+
+evaluate-commands %sh{
+  kak-lsp --kakoune --session "$kak_session"
+  kak-tree-sitter -dks --init "$kak_session"
+}
+
+# User preference
+# ───────────────
+
+set-option global makecmd 'make -j8'
+set-option global grepcmd "rg --vimgrep --hidden"
+set-option global ui_options terminal_assistant=none
+set-option global scrolloff 4,4
+set-option global tabstop 2
+set-option global indentwidth 2
+set-option global modelinefmt '%val{bufname} %val{cursor_line}:%val{cursor_column} {{context_info}} {{mode_info}} {black,red+b} %val{client} '
+hook global ModuleLoaded clang %{ set-option global clang_options -std=c++20 }
+hook global ModuleLoaded tmux %{ set-option global windowing_placement horizontal }
+
+colorscheme palernight
+
+add-highlighter global/ show-matching -previous
+
+set-face global CurSearch +u
+
+hook global RegisterModified '/' %{ add-highlighter -override global/search regex "%reg{/}" 0:CurSearch }
+
+hook global WinCreate ^[^*]+$ %{
+    add-highlighter window/ number-lines -hlcursor -relative -separator ' '
+    add-highlighter window/ show-whitespaces -only-trailing
+    add-highlighter window/trailing-whitespace regex '\h+$' 0:default,red+F
+    add-highlighter window/comments group
+    add-highlighter window/comments/todo regex \b(TODO)\b 0:green+r
+    add-highlighter window/comments/fixme regex \b(FIXME)\b 0:red+r
+    add-highlighter window/comments/xxx regex \b(XXX)\b 0:cyan+r
+    add-highlighter window/comments/note regex \b(NOTE)\b 0:blue+r
+}
+
+# Enable editor config
+# ────────────────────
+
+hook global BufOpenFile .* %{ editorconfig-load }
+hook global BufNewFile .* %{ editorconfig-load }
+
+# Filetype specific hooks
+# ───────────────────────
+
+hook global WinSetOption filetype=(c|cpp) %{
+    lsp-enable-window
+    clang-enable-autocomplete
+    clang-enable-diagnostics
+    alias window lint clang-parse
+    alias window lint-next-error clang-diagnostics-next
+}
+
+hook global WinSetOption filetype=python %{
+    jedi-enable-autocomplete
+    lint-enable
+    set-option global lintcmd 'flake8'
+}
+
+# Highlight the word under the cursor
+# ───────────────────────────────────
+
+set-face global CurWord +b
+
+hook global NormalIdle .* %{
+    eval -draft %{ try %{
+        exec ,<a-i>w <a-k>\A\w+\z<ret>
+        add-highlighter -override global/curword regex "\b\Q%val{selection}\E\b" 0:CurWord
+    } catch %{
+        add-highlighter -override global/curword group
+    } }
+}
+
+# Switch cursor color in insert mode
+# ──────────────────────────────────
+
+set-face global InsertCursor ,blue+B
+set-face global InsertCursorEol ,blue+F
+
+hook global ModeChange .*:.*:insert %{
+    set-face window PrimaryCursor InsertCursor
+    set-face window PrimaryCursorEol InsertCursorEol
+}
+
+hook global ModeChange .*:insert:.* %{ try %{
+    unset-face window PrimaryCursor
+    unset-face window PrimaryCursorEol
+} }
+
+
+# System clipboard handling
+# ─────────────────────────
+
+evaluate-commands %sh{
+    if [ -n "$SSH_TTY" ]; then
+        copy='printf "\033]52;;%s\033\\" $(base64 | tr -d "\n") > $( [ -n "$kak_client_pid" ] && echo /proc/$kak_client_pid/fd/0 || echo /dev/tty )'
+        paste='printf "paste unsupported through ssh"'
+        backend="OSC 52"
+    else
+        case $(uname) in
+            Linux)
+                if [ -n "$WAYLAND_DISPLAY" ]; then
+                    copy="wl-copy -p"; paste="wl-paste -p"; backend=Wayland
+                else
+                    copy="xclip -i"; paste="xclip -o"; backend=X11
+                fi
+                ;;
+            Darwin)  copy="pbcopy"; paste="pbpaste"; backend=OSX ;;
+        esac
+    fi
+
+    printf "map global user -docstring 'paste (after) from clipboard' p '<a-!>%s<ret>'\n" "$paste"
+    printf "map global user -docstring 'paste (before) from clipboard' P '!%s<ret>'\n" "$paste"
+    printf "map global user -docstring 'yank to primary' y '<a-|>%s<ret>:echo -markup %%{{Information}copied selection to %s primary}<ret>'\n" "$copy" "$backend"
+    printf "map global user -docstring 'yank to clipboard' Y '<a-|>%s<ret>:echo -markup %%{{Information}copied selection to %s clipboard}<ret>'\n" "$copy -selection clipboard" "$backend"
+    printf "map global user -docstring 'replace from clipboard' R '|%s<ret>'\n" "$paste"
+    printf "define-command -override echo-to-clipboard -params .. %%{ echo -to-shell-script '%s' -- %%arg{@} }" "$copy"
+}
+
+
+
+# Various mappings
+# ────────────────
+
+map global normal '#' :comment-line<ret>
+
+map global user -docstring 'next lint error' n ':lint-next-error<ret>'
+map global normal <c-p> :lint<ret>
+
+map global user -docstring 'gdb helper mode' g ':gdb-helper<ret>'
+map global user -docstring 'gdb helper mode (repeat)' G ':gdb-helper-repeat<ret>'
+
+map global user -docstring 'lsp mode' l ':enter-user-mode lsp<ret>'
+
+hook global -always BufOpenFifo '\*grep\*' %{ map global normal <minus> ': grep-next-match<ret>' }
+hook global -always BufOpenFifo '\*make\*' %{ map global normal <minus> ': make-next-error<ret>' }
+
+map -docstring 'enter jump mode (select mode: replace)' global normal f ':enter_jump_mode_with_replace_select_mode<ret>'
+map -docstring 'enter jump mode (select mode: extend)' global normal F ':enter_jump_mode_with_extend_select_mode<ret>'
+map -docstring 'enter jump mode (select mode: append)' global normal <a-f> ':enter_jump_mode_with_append_select_mode<ret>'
+
+# Enable <c-p>/<c-n> for prompt completion
+# ──────────────────────────────────────────────────────
+
+map global prompt <c-p> <s-tab>
+map global prompt <c-n> <tab>
+
+
+# Helper commands
+# ───────────────
+
+define-command find -params 1 %{ edit %arg{1} }
+complete-command -menu find shell-script-candidates %{ ag -g '' --ignore "$kak_opt_ignored_files" }
+
+define-command mkdir %{ nop %sh{ mkdir -p $(dirname $kak_buffile) } }
+
+define-command ide -params 0..1 %{
+    try %{ rename-session %arg{1} }
+
+    set-option local windowing_placement window
+
+    rename-client main
+    nop %sh{
+        tmux rename-window main
+        tmux split-pane
+        tmux resize-pane -D 10
+        tmux select-pane -l
+    }
+    set-option global jumpclient main
+
+    new rename-client tools
+    nop %sh{ tmux rename-window tools }
+    set-option global toolsclient tools
+
+    new rename-client docs
+    nop %sh{ tmux rename-window docs }
+    set-option global docsclient docs
+
+    nop %sh{ tmux select-window -t 1 }
+}
+
+define-command delete-buffers-matching -params 1 %{
+    evaluate-commands -buffer * %{
+        evaluate-commands %sh{ case "$kak_buffile" in $1) echo "delete-buffer" ;; esac }
+    }
+}
+
+declare-option -hidden str swap_buffer_target
+define-command swap-buffer-with -override -params 1 -client-completion %{
+    set-option global swap_buffer_target %val{bufname}
+    edit -scratch # release current window for other client
+    evaluate-commands -client %arg{1} "
+        set-option global swap_buffer_target %%val{bufname}
+        buffer %opt{swap_buffer_target}
+    "
+    delete-buffer # delete the temporary scratch buffer
+    buffer %opt{swap_buffer_target}
+}
+
+declare-option int gdb_server_port 5678
+declare-option str gdb_server_cmd "gdbserver :%opt{gdb_server_port}"
+
+define-command gdb-server -params .. %{
+    fifo %opt{gdb_server_cmd} %arg{@}
+    gdb-session-new -ex "target extended-remote :%opt{gdb_server_port}"
+}
+
+define-command diff-buffers -override -params 2 %{
+    evaluate-commands %sh{
+        file1=$(mktemp)
+        file2=$(mktemp)
+        echo "
+            evaluate-commands -buffer '$1' write -force $file1
+            evaluate-commands -buffer '$2' write -force $file2
+            edit! -scratch *diff-buffers*
+            set buffer filetype diff
+            set-register | 'diff -u $file1 $file2; rm $file1 $file2'
+            execute-keys !<ret>gg
+        "
+}}
+
+complete-command diff-buffers buffer
+
+hook global GlobalSetOption 'makecmd=ninja(-build)?\b.*' %{ complete-command make shell-script-candidates %{ $kak_opt_makecmd -t targets | cut -f 1 -d : } }
+hook global GlobalSetOption 'makecmd=bazel\b.*' %{ complete-command make shell-script-candidates %{ bazel query //... } }
+
+# Mail
+# ────
+
+hook global BufOpenFile .*/mail/.*/(cur|new|tmp)/[^/]+ %{ set-option buffer filetype mail }
+
+# Load local Kakoune config file if it exists
+# ───────────────────────────────────────────
+
+evaluate-commands %sh{ [ -f $kak_config/local.kak ] && echo "source $kak_config/local.kak" }
+
+# Load extra modules
+# ──────────────────
+
+source ~/.config/kak/rc/jump_mode.kak
