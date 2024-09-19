@@ -20,9 +20,13 @@ hook global ModuleLoaded fzf %{
     set global fzf_preview_tmux_height 20
 }
 plug "robertmeta/plug.kak" noload
-plug "ul/kak-lsp" do %{
-    cargo install --locked --force --path .
+
+plug "basbebe/pandoc.kak" %{
+    set-option global pandoc_options '-d default'
 }
+
+plug 'delapouite/kakoune-livedown'
+plug 'occivink/kakoune-gdb'
 
 evaluate-commands %sh{
   kak-lsp --kakoune --session "$kak_session"
@@ -38,7 +42,13 @@ set-option global ui_options terminal_assistant=none
 set-option global scrolloff 4,4
 set-option global tabstop 2
 set-option global indentwidth 2
-set-option global modelinefmt '%val{bufname} %val{cursor_line}:%val{cursor_column} {{context_info}} {{mode_info}} {black,red+b} %val{client} '
+# set-option global modelinefmt '%val{bufname} %val{cursor_line}:%val{cursor_column} {{context_info}} {{mode_info}} {black,red+b} %val{client} '
+try %{
+  nop %opt{gdb_indicator} %opt{build_modeline_progress} %opt{build_modeline_failure} %opt{build_modeline_success}
+  set-option global modelinefmt '%val{bufname} %val{cursor_line}:%val{cursor_column} {{context_info}} {{mode_info}} {black,cyan}%opt{build_modeline_progress}{black,green}%opt{build_modeline_success}{black,red}%opt{build_modeline_failure}{default,default} {red,default}%opt{gdb_indicator} {black,red+b} %val{client} '
+} catch %{
+  set-option global modelinefmt '%val{bufname} %val{cursor_line}:%val{cursor_column} {{context_info}} {{mode_info}} {black,red+b} %val{client} '
+}
 hook global ModuleLoaded clang %{ set-option global clang_options -std=c++20 }
 hook global ModuleLoaded tmux %{ set-option global windowing_placement horizontal }
 
@@ -52,13 +62,13 @@ hook global RegisterModified '/' %{ add-highlighter -override global/search rege
 
 hook global WinCreate ^[^*]+$ %{
     add-highlighter window/ number-lines -hlcursor -relative -separator ' '
-    add-highlighter window/ show-whitespaces -only-trailing
+    # add-highlighter window/ show-whitespaces -only-trailing
     add-highlighter window/trailing-whitespace regex '\h+$' 0:default,red+F
     add-highlighter window/comments group
-    add-highlighter window/comments/todo regex \b(TODO)\b 0:green+r
-    add-highlighter window/comments/fixme regex \b(FIXME)\b 0:red+r
-    add-highlighter window/comments/xxx regex \b(XXX)\b 0:cyan+r
-    add-highlighter window/comments/note regex \b(NOTE)\b 0:blue+r
+    add-highlighter window/comments/todo regex \b(TODO)\b 0:green,black+bf
+    add-highlighter window/comments/fixme regex \b(FIXME)\b 0:red,black+bf
+    add-highlighter window/comments/xxx regex \b(XXX)\b 0:cyan,black+bf
+    add-highlighter window/comments/note regex \b(NOTE)\b 0:blue,black+bf
 }
 
 # Enable editor config
@@ -114,7 +124,6 @@ hook global ModeChange .*:insert:.* %{ try %{
     unset-face window PrimaryCursorEol
 } }
 
-
 # System clipboard handling
 # ─────────────────────────
 
@@ -126,7 +135,10 @@ evaluate-commands %sh{
     else
         case $(uname) in
             Linux)
-                if [ -n "$WAYLAND_DISPLAY" ]; then
+                if grep -qEi "(Microsoft|WSL)" /proc/version &> /dev/null; then
+                    # WSL detected
+                    copy="clip.exe"; paste="powershell.exe Get-Clipboard"; backend=WSL
+                elif [ -n "$WAYLAND_DISPLAY" ]; then
                     copy="wl-copy -p"; paste="wl-paste -p"; backend=Wayland
                 else
                     copy="xclip -i"; paste="xclip -o"; backend=X11
@@ -144,8 +156,6 @@ evaluate-commands %sh{
     printf "define-command -override echo-to-clipboard -params .. %%{ echo -to-shell-script '%s' -- %%arg{@} }" "$copy"
 }
 
-
-
 # Various mappings
 # ────────────────
 
@@ -162,9 +172,29 @@ map global user -docstring 'lsp mode' l ':enter-user-mode lsp<ret>'
 hook global -always BufOpenFifo '\*grep\*' %{ map global normal <minus> ': grep-next-match<ret>' }
 hook global -always BufOpenFifo '\*make\*' %{ map global normal <minus> ': make-next-error<ret>' }
 
-map -docstring 'enter jump mode (select mode: replace)' global normal f ':enter_jump_mode_with_replace_select_mode<ret>'
-map -docstring 'enter jump mode (select mode: extend)' global normal F ':enter_jump_mode_with_extend_select_mode<ret>'
-map -docstring 'enter jump mode (select mode: append)' global normal <a-f> ':enter_jump_mode_with_append_select_mode<ret>'
+map -docstring 'enter jump mode (select mode: replace)' global user f ':enter_jump_mode_with_replace_select_mode<ret>'
+map -docstring 'enter jump mode (select mode: extend)' global user  F ':enter_jump_mode_with_extend_select_mode<ret>'
+map -docstring 'enter jump mode (select mode: append)' global user <a-f> ':enter_jump_mode_with_append_select_mode<ret>'
+
+declare-user-mode debugger
+hook global GlobalSetOption gdb_session_started=true %{
+    map global user -docstring 'debugger mode' d ':enter-user-mode debugger<ret>'
+    map global debugger -docstring 'next' n   ': gdb-next<ret>'
+    map global debugger -docstring 'step' s   ': gdb-step<ret>'
+    map global debugger -docstring 'finish' f   ': gdb-finish<ret>'
+    map global debugger -docstring 'print' p   ': gdb-print<ret>'
+    map global debugger -docstring 'togggle breakpoint' b   ': gdb-toggle-breakpoint<ret>'
+    map global debugger -docstring 'continue' c		': gdb-continue<ret>'
+}
+
+hook global GlobalSetOption gdb_session_started=false %{
+    unmap global debugger n ': gdb-next<ret>'
+    unmap global debugger s ': gdb-step<ret>'
+    unmap global debugger f ': gdb-finish<ret>'
+    unmap global debugger p ': gdb-print<ret>'
+    unmap global debugger b ': gdb-toggle-breakpoint<ret>'
+    unmap global debugger c ': gdb-continue<ret>'
+}
 
 # Enable <c-p>/<c-n> for prompt completion
 # ──────────────────────────────────────────────────────
@@ -177,12 +207,13 @@ map global prompt <c-n> <tab>
 # ───────────────
 
 define-command find -params 1 %{ edit %arg{1} }
-complete-command -menu find shell-script-candidates %{ ag -g '' --ignore "$kak_opt_ignored_files" }
+complete-command -menu find shell-script-candidates %{ rg '' --files-with-matches --ignore-file "$kak_opt_ignored_files" }
 
 define-command mkdir %{ nop %sh{ mkdir -p $(dirname $kak_buffile) } }
 
 define-command ide -params 0..1 %{
     try %{ rename-session %arg{1} }
+    try %sh{ tmux rename-session $1 }
 
     set-option local windowing_placement window
 
@@ -265,3 +296,7 @@ evaluate-commands %sh{ [ -f $kak_config/local.kak ] && echo "source $kak_config/
 # ──────────────────
 
 source ~/.config/kak/rc/jump_mode.kak
+source ~/.config/kak/rc/markdown.kak
+source ~/.config/kak/rc/colorizer.kak
+# source ~/.config/kak/rc/obsidian-kak/main.kak
+source ~/.config/kak/rc/obsidian.kak

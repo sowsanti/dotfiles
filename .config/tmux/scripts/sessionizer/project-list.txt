@@ -1,0 +1,2 @@
+/root
+/mnt/c/Users/sowsanti/Dev/personal/cpp/sms-oop
